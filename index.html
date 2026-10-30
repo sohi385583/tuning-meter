@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oscillator & Tuning Meter - フルート・ピッコロ対応 高精度チューナー</title>
+    <meta name="description" content="Web Audio APIを活用した高精度チューニングメーター、基準音オシレーター、リアルタイム追従発音（サウンドバック）Webツール。">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- Header -->
+    <header>
+        <div class="container header-content">
+            <div class="app-title">
+                🎵 Tuner &amp; Oscillator
+                <span class="badge">Flute / Piccolo Edition</span>
+            </div>
+            <div class="header-controls">
+                <button id="micToggleBtn" class="btn btn-primary">
+                    <span id="micIcon">🎤</span> マイク開始
+                </button>
+                <button id="audioMuteBtn" class="btn" title="マスター消音">
+                    <span>🔊</span> 音量ミュート
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+
+        <!-- Global Settings Bar -->
+        <div class="settings-bar">
+            <div class="setting-item">
+                <label for="instrumentPreset">楽器プリセット</label>
+                <select id="instrumentPreset">
+                    <option value="flute" selected>Flute (B3 - D7)</option>
+                    <option value="piccolo">Piccolo (D5 - C8)</option>
+                    <option value="chromatic">Chromatic (全音階 C1 - C8)</option>
+                    <option value="guitar">Guitar (E2 - E4)</option>
+                    <option value="bass">Bass (E1 - G2)</option>
+                </select>
+            </div>
+            <div class="setting-item">
+                <label for="basePitchInput">基準ピッチ (A4)</label>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input type="number" id="basePitchInput" min="430" max="450" step="0.5" value="442"
+                        style="width: 80px;">
+                    <span style="font-size: 0.9rem; color: var(--text-muted);">Hz</span>
+                    <button id="set442Btn" class="btn" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">442</button>
+                    <button id="set440Btn" class="btn" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">440</button>
+                </div>
+            </div>
+            <div class="setting-item">
+                <label for="noiseGateSlider">マイク感度・ノイズゲート</label>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input type="range" id="noiseGateSlider" min="0.001" max="0.08" step="0.002" value="0.01"
+                        style="flex: 1;">
+                    <span id="noiseGateValue"
+                        style="font-size: 0.85rem; color: var(--text-muted); width: 35px;">1.0%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mode Navigation Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="tabTuner">🎯 チューナー (測定)</button>
+            <button class="tab-btn" data-tab="tabSoundBack">🔁 サウンドバック (追従発音)</button>
+            <button class="tab-btn" data-tab="tabOscillator">📢 オシレーター (基準音)</button>
+        </div>
+
+        <!-- Sound-Back Status Banner (Visible in SoundBack Mode) -->
+        <div id="soundBackBanner" class="soundback-status-bar" style="display: none;">
+            <div class="soundback-indicator">
+                <div class="status-dot" id="soundBackStatusDot"></div>
+                <span id="soundBackStatusText">サウンドバック待機中 (音を吹いてください)</span>
+            </div>
+            <div style="display: flex; gap: 0.6rem; align-items: center;">
+                <label style="font-size: 0.85rem; color: var(--text-muted);">追従方式:</label>
+                <select id="soundBackModeSelect" style="padding: 0.3rem 0.6rem; font-size: 0.85rem;">
+                    <option value="nearest" selected>平均律の正確な基準音 (442Hz等)</option>
+                    <option value="exact">実測ピッチ追従 (うなり確認)</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Shared Main Display Card (Pitch Meter + Display) -->
+        <div class="display-card" id="mainDisplayCard">
+            <div class="note-display">
+                <div class="note-name-container">
+                    <span class="note-letter" id="noteLetter">-</span>
+                    <span class="note-accidental" id="noteAccidental"></span>
+                    <span class="note-octave" id="noteOctave"></span>
+                </div>
+                <div class="pitch-meta">
+                    <span>検出: <strong id="detectedFreq">--.-</strong> Hz</span>
+                    <span>目標: <strong id="targetFreq">--.-</strong> Hz</span>
+                    <span>誤差: <strong id="centDiff">0</strong> cent</span>
+                </div>
+            </div>
+
+            <!-- Analog Cent Meter Canvas -->
+            <div class="meter-wrapper">
+                <canvas id="meterCanvas" width="600" height="180"></canvas>
+            </div>
+            <div class="cent-display" id="centReadout">--</div>
+
+            <!-- Oscilloscope Canvas -->
+            <canvas id="oscilloscopeCanvas" width="600" height="90"></canvas>
+        </div>
+
+        <!-- Tab 1: Tuner Extra Controls -->
+        <div id="tabTuner" class="tab-panel active">
+            <!-- Tuner Helper / Shortcuts -->
+            <div class="keyboard-section">
+                <div class="section-title">
+                    <span>音域プリセット (フルート / ピッコロ常用域)</span>
+                    <span style="font-size: 0.8rem; color: var(--text-muted);">クリックでその音の周波数を即座に確認</span>
+                </div>
+                <div class="preset-pills">
+                    <button class="pill-btn" data-freq="246.94">Flute Low B (B3: 247Hz)</button>
+                    <button class="pill-btn" data-freq="261.63">Flute Low C (C4: 262Hz)</button>
+                    <button class="pill-btn" data-freq="442.00">Standard A (A4: 442Hz)</button>
+                    <button class="pill-btn" data-freq="884.00">Flute High A (A5: 884Hz)</button>
+                    <button class="pill-btn" data-freq="1768.00">Flute High A (A6: 1768Hz)</button>
+                    <button class="pill-btn" data-freq="2093.00">Flute Top C (C7: 2093Hz)</button>
+                    <button class="pill-btn" data-freq="4186.01">Piccolo Top C (C8: 4186Hz)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: SoundBack Settings Panel -->
+        <div id="tabSoundBack" class="tab-panel">
+            <div class="osc-controls-grid">
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>サウンドバック音量</span>
+                        <span id="sbVolText">40%</span>
+                    </div>
+                    <input type="range" id="soundBackGainSlider" min="0" max="1" step="0.05" value="0.4">
+                    <small style="color: var(--text-muted);">自分の楽器の音と聴き比べやすい適度な音量に調整してください。</small>
+                </div>
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>出力波形</span>
+                    </div>
+                    <select id="soundBackWaveType">
+                        <option value="sine" selected>Sine (正弦波 - 澄んだ音)</option>
+                        <option value="triangle">Triangle (三角波 - まろやか)</option>
+                        <option value="sawtooth">Sawtooth (鋸歯状波 - 倍音豊か)</option>
+                    </select>
+                    <small style="color: var(--text-muted);">フルートには正弦波 (Sine) または三角波が最も溶け込みます。</small>
+                </div>
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>消音遅延時間 (リリース)</span>
+                        <span id="sbReleaseText">0.3 秒</span>
+                    </div>
+                    <input type="range" id="soundBackReleaseSlider" min="0.1" max="1.5" step="0.1" value="0.3">
+                    <small style="color: var(--text-muted);">音が途切れてからオシレーターが消音するまでの猶予時間。</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Oscillator Panel -->
+        <div id="tabOscillator" class="tab-panel">
+            <!-- Manual Tone Generator Controls -->
+            <div class="osc-controls-grid">
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>オシレーター電源</span>
+                    </div>
+                    <button id="oscPlayBtn" class="btn btn-primary"
+                        style="padding: 0.8rem; justify-content: center; font-size: 1rem;">
+                        ▶ 基準音を発振
+                    </button>
+                </div>
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>波形 (Waveform)</span>
+                    </div>
+                    <select id="oscWaveType">
+                        <option value="sine" selected>Sine (正弦波)</option>
+                        <option value="triangle">Triangle (三角波)</option>
+                        <option value="square">Square (矩形波)</option>
+                        <option value="sawtooth">Sawtooth (鋸歯状波)</option>
+                    </select>
+                </div>
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>音量 (Volume)</span>
+                        <span id="oscVolText">30%</span>
+                    </div>
+                    <input type="range" id="oscGainSlider" min="0" max="1" step="0.05" value="0.3">
+                </div>
+                <div class="control-card">
+                    <div class="control-header">
+                        <span>周波数直接入力</span>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="number" id="oscFreqDirect" min="20" max="8000" step="0.1" value="442.0"
+                            style="flex: 1;">
+                        <span style="font-size: 0.9rem; color: var(--text-muted);">Hz</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chromatic Keyboard for Quick Pitch Playing -->
+            <div class="keyboard-section">
+                <div class="section-title">
+                    <span>1オクターブ鍵盤 (オクターブ選択と合わせてワンクリック発音)</span>
+                    <div style="display: flex; gap: 0.4rem; align-items: center;">
+                        <label style="font-size: 0.85rem; color: var(--text-muted);">オクターブ:</label>
+                        <select id="keyOctaveSelect" style="padding: 0.2rem 0.5rem;">
+                            <option value="3">3 (フルート低音 B3等)</option>
+                            <option value="4" selected>4 (中央 A4=442Hz)</option>
+                            <option value="5">5 (フルート中高音)</option>
+                            <option value="6">6 (フルート高音)</option>
+                            <option value="7">7 (ピッコロ高音)</option>
+                            <option value="8">8 (ピッコロ最高音 C8)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="keyboard-grid" id="pianoKeysGrid">
+                    <button class="key-btn" data-semitone="0">C</button>
+                    <button class="key-btn accidental" data-semitone="1">C#</button>
+                    <button class="key-btn" data-semitone="2">D</button>
+                    <button class="key-btn accidental" data-semitone="3">D#</button>
+                    <button class="key-btn" data-semitone="4">E</button>
+                    <button class="key-btn" data-semitone="5">F</button>
+                    <button class="key-btn accidental" data-semitone="6">F#</button>
+                    <button class="key-btn" data-semitone="7">G</button>
+                    <button class="key-btn accidental" data-semitone="8">G#</button>
+                    <button class="key-btn" data-semitone="9">A</button>
+                    <button class="key-btn accidental" data-semitone="10">A#</button>
+                    <button class="key-btn" data-semitone="11">B</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Application Script -->
+    <script type="module" src="js/app.js"></script>
+</body>
+
+</html>
